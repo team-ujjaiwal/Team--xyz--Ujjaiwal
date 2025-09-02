@@ -112,9 +112,9 @@ def get_player_info(uid, region, token):
             "X-GA": "v1 1",
             "ReleaseVersion": "OB50",
             "Content-Type": "application/x-www-form-urlencoded",
-            "Content-Length": "16",
+            "Content-Length": str(len(encrypted_payload)//2),  # Content length in bytes
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-N975F Build/PI)",
-            "Host": "clientbp.ggblueshark.com",
+            "Host": url.split("//")[1].split("/")[0],  # Extract host from URL
             "Connection": "close",
             "Accept-Encoding": "gzip, deflate, br"
         }
@@ -122,12 +122,20 @@ def get_player_info(uid, region, token):
         response = requests.post(url, headers=headers, data=bytes.fromhex(encrypted_payload), timeout=10)
         
         if response.status_code == 200:
-            # Parse the protobuf response
-            player_info = CWSpam_count_pb2.Info()
-            player_info.ParseFromString(response.content)
-            return player_info
+            try:
+                # Parse the protobuf response
+                player_info = CWSpam_count_pb2.Info()
+                player_info.ParseFromString(response.content)
+                return player_info
+            except Exception as e:
+                print(f"Error parsing protobuf response: {e}")
+                # Try to decode as JSON if protobuf fails
+                try:
+                    return response.json()
+                except:
+                    return None
         else:
-            print(f"Failed to get player info: {response.status_code}")
+            print(f"Failed to get player info: {response.status_code}, Response: {response.text}")
             return None
     except Exception as e:
         print(f"Error getting player info: {e}")
@@ -147,9 +155,9 @@ def send_friend_request(uid, token, region, results):
             "X-GA": "v1 1",
             "ReleaseVersion": "OB50",
             "Content-Type": "application/x-www-form-urlencoded",
-            "Content-Length": "16",
+            "Content-Length": str(len(encrypted_payload)//2),  # Content length in bytes
             "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-N975F Build/PI)",
-            "Host": "clientbp.ggblueshark.com",
+            "Host": url.split("//")[1].split("/")[0],  # Extract host from URL
             "Connection": "close",
             "Accept-Encoding": "gzip, deflate, br"
         }
@@ -159,6 +167,7 @@ def send_friend_request(uid, token, region, results):
         if response.status_code == 200:
             results["success"] += 1
         else:
+            print(f"Friend request failed with status: {response.status_code}")
             results["failed"] += 1
     except Exception as e:
         print(f"Error sending friend request: {e}")
@@ -196,15 +205,29 @@ def send_requests():
     total_requests = results["success"] + results["failed"]
     status = 1 if results["success"] != 0 else 2
 
-    response_data = {
-        "success_count": results["success"],
-        "failed_count": results["failed"],
-        "PlayerNickname": player_info.AccountInfo.PlayerNickname,
-        "PlayerLevel": player_info.AccountInfo.Levels,
-        "PlayerLikes": player_info.AccountInfo.Likes,
-        "PlayerRegion": player_info.AccountInfo.PlayerRegion,
-        "status": status
-    }
+    # Handle both protobuf and JSON responses
+    if hasattr(player_info, 'AccountInfo'):
+        # Protobuf response
+        response_data = {
+            "success_count": results["success"],
+            "failed_count": results["failed"],
+            "PlayerNickname": player_info.AccountInfo.PlayerNickname,
+            "PlayerLevel": player_info.AccountInfo.Levels,
+            "PlayerLikes": player_info.AccountInfo.Likes,
+            "PlayerRegion": player_info.AccountInfo.PlayerRegion,
+            "status": status
+        }
+    else:
+        # JSON response or fallback
+        response_data = {
+            "success_count": results["success"],
+            "failed_count": results["failed"],
+            "PlayerNickname": "Unknown",
+            "PlayerLevel": 0,
+            "PlayerLikes": 0,
+            "PlayerRegion": region,
+            "status": status
+        }
 
     return jsonify(response_data)
 
