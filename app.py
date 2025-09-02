@@ -10,6 +10,9 @@ import CWSpam_count_pb2
 
 app = Flask(__name__)
 
+# Initialize API keys set
+api_keys = set()
+
 # Encryption functions from byte.py integrated directly
 def Encrypt_ID(x):
     x = int(x)
@@ -164,8 +167,46 @@ def send_friend_request(uid, token, region, results):
         print(f"Error sending friend request: {e}")
         results["failed"] += 1
 
+# Key management routes
+@app.route('/make_key', methods=['GET'])
+def make_key():
+    key = request.args.get('key')
+    if not key:
+        return jsonify({'error': 'Missing key parameter'}), 400
+    api_keys.add(key)  # Add key to the set
+    return jsonify({'message': 'Key added successfully', 'key': key}), 200
+
+@app.route('/del_key', methods=['GET'])
+def del_key():
+    key = request.args.get('key')
+    if not key:
+        return jsonify({'error': 'Missing key parameter'}), 400
+    if key in api_keys:
+        api_keys.remove(key)
+        return jsonify({'message': 'Key deleted successfully', 'key': key}), 200
+    else:
+        return jsonify({'error': 'Key not found'}), 404
+
+@app.route('/del_all_keys', methods=['GET'])
+def del_all_keys():
+    api_keys.clear()
+    return jsonify({'message': 'All keys deleted successfully'}), 200
+
+@app.route('/all_keys', methods=['GET'])
+def all_keys():
+    return jsonify({'keys': list(api_keys)}), 200
+
+# Key verification function
+def verify_key(key):
+    return key in api_keys
+
 @app.route("/send_requests", methods=["GET"])
 def send_requests():
+    # Check for API key
+    api_key = request.args.get("key")
+    if not api_key or not verify_key(api_key):
+        return jsonify({"error": "Valid API key is required"}), 401
+    
     uid = request.args.get("uid")
     region = request.args.get("region", "IND").upper()
 
