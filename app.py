@@ -7,8 +7,6 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 import google.protobuf as protobuf
 import CWSpam_count_pb2
-import time
-import random
 
 app = Flask(__name__)
 
@@ -98,42 +96,28 @@ def get_region_url(server_name, endpoint):
     
     return f"{url}/{endpoint}"
 
-# List of user agents to rotate
-USER_AGENTS = [
-    "Dalvik/2.1.0 (Linux; U; Android 9; SM-N975F Build/PI)",
-    "Dalvik/2.1.0 (Linux; U; Android 10; SM-G981B Build/QP1A.190711.020)",
-    "Dalvik/2.1.0 (Linux; U; Android 11; Pixel 5 Build/RQ3A.210805.001.A1)",
-    "Dalvik/2.1.0 (Linux; U; Android 12; SM-S908E Build/SP1A.210812.016)"
-]
-
-def get_headers(token):
-    return {
-        "Expect": "100-continue",
-        "Authorization": f"Bearer {token}",
-        "X-Unity-Version": "2018.4.11f1",
-        "X-GA": "v1 1",
-        "ReleaseVersion": "OB50",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": "16",
-        "User-Agent": random.choice(USER_AGENTS),
-        "Host": "clientbp.ggblueshark.com",
-        "Connection": "close",
-        "Accept-Encoding": "gzip, deflate, br"
-    }
-
 def get_player_info(uid, region, token):
     """Get actual player information using GetPlayerPersonalShow endpoint"""
     try:
-        # Add delay to avoid rate limiting
-        time.sleep(random.uniform(1, 2))
-        
         # Create payload for GetPlayerPersonalShow
         encrypted_id = Encrypt_ID(uid)
         payload = f"08{encrypted_id}10a7c4839f1e1801"
         encrypted_payload = encrypt_api(payload)
         
         url = get_region_url(region, "GetPlayerPersonalShow")
-        headers = get_headers(token)
+        headers = {
+            "Expect": "100-continue",
+            "Authorization": f"Bearer {token}",
+            "X-Unity-Version": "2018.4.11f1",
+            "X-GA": "v1 1",
+            "ReleaseVersion": "OB50",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Length": "16",
+            "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-N975F Build/PI)",
+            "Host": "clientbp.ggblueshark.com",
+            "Connection": "close",
+            "Accept-Encoding": "gzip, deflate, br"
+        }
         
         response = requests.post(url, headers=headers, data=bytes.fromhex(encrypted_payload), timeout=10)
         
@@ -142,9 +126,6 @@ def get_player_info(uid, region, token):
             player_info = CWSpam_count_pb2.Info()
             player_info.ParseFromString(response.content)
             return player_info
-        elif response.status_code == 429:
-            print(f"Rate limited when fetching player info")
-            return None
         else:
             print(f"Failed to get player info: {response.status_code}")
             return None
@@ -152,37 +133,36 @@ def get_player_info(uid, region, token):
         print(f"Error getting player info: {e}")
         return None
 
-def send_friend_request_with_retry(uid, token, region, results, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            # Add random delay with exponential backoff
-            delay = random.uniform(1, 3) * (attempt + 1)
-            time.sleep(delay)
-            
-            encrypted_id = Encrypt_ID(uid)
-            payload = f"08a7c4839f1e10{encrypted_id}1801"
-            encrypted_payload = encrypt_api(payload)
+def send_friend_request(uid, token, region, results):
+    try:
+        encrypted_id = Encrypt_ID(uid)
+        payload = f"08a7c4839f1e10{encrypted_id}1801"
+        encrypted_payload = encrypt_api(payload)
 
-            url = get_region_url(region, "RequestAddingFriend")
-            headers = get_headers(token)
+        url = get_region_url(region, "RequestAddingFriend")
+        headers = {
+            "Expect": "100-continue",
+            "Authorization": f"Bearer {token}",
+            "X-Unity-Version": "2018.4.11f1",
+            "X-GA": "v1 1",
+            "ReleaseVersion": "OB50",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Length": "16",
+            "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-N975F Build/PI)",
+            "Host": "clientbp.ggblueshark.com",
+            "Connection": "close",
+            "Accept-Encoding": "gzip, deflate, br"
+        }
 
-            response = requests.post(url, headers=headers, data=bytes.fromhex(encrypted_payload), timeout=10)
+        response = requests.post(url, headers=headers, data=bytes.fromhex(encrypted_payload), timeout=10)
 
-            if response.status_code == 200:
-                results["success"] += 1
-                return
-            elif response.status_code == 429:
-                print(f"Rate limited, waiting longer... Attempt {attempt + 1}")
-                time.sleep(5)  # Longer wait for rate limits
-                continue
-            else:
-                results["failed"] += 1
-                return
-                
-        except Exception as e:
-            print(f"Error on attempt {attempt + 1}: {e}")
-            if attempt == max_retries - 1:
-                results["failed"] += 1
+        if response.status_code == 200:
+            results["success"] += 1
+        else:
+            results["failed"] += 1
+    except Exception as e:
+        print(f"Error sending friend request: {e}")
+        results["failed"] += 1
 
 @app.route("/send_requests", methods=["GET"])
 def send_requests():
@@ -200,23 +180,15 @@ def send_requests():
     player_info = get_player_info(uid, region, tokens[0])
     
     if not player_info:
-        return jsonify({"error": "Failed to get player information. Server may be rate limiting."}), 500
+        return jsonify({"error": "Failed to get player information"}), 500
 
-    MAX_CONCURRENT = 20  # Reduced from 110 to avoid overwhelming the server
-    tokens_to_use = tokens[:MAX_CONCURRENT]
-    
     results = {"success": 0, "failed": 0}
     threads = []
 
-    for token in tokens_to_use:
-        thread = threading.Thread(target=send_friend_request_with_retry, 
-                                 args=(uid, token, region, results))
+    for token in tokens[:110]:
+        thread = threading.Thread(target=send_friend_request, args=(uid, token, region, results))
         threads.append(thread)
         thread.start()
-        
-        # Limit concurrent threads to avoid rate limiting
-        if len(threading.enumerate()) > 10:  # Max 10 concurrent threads
-            time.sleep(1)
 
     for thread in threads:
         thread.join()
@@ -235,18 +207,6 @@ def send_requests():
     }
 
     return jsonify(response_data)
-
-@app.route("/")
-def index():
-    return """
-    <h1>Free Fire Friend Request Sender</h1>
-    <p>Use the /send_requests endpoint with parameters:</p>
-    <ul>
-        <li>uid: Player ID (required)</li>
-        <li>region: Server region (IND, BR, US, SAC, NA, etc.)</li>
-    </ul>
-    <p>Example: /send_requests?uid=6864208646&region=IND</p>
-    """
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
